@@ -166,6 +166,8 @@ static void __exit dsc_exit(void)
 {
    printk(KERN_INFO "Unloading DSC GPIO\n");
    ungpio_irq();
+   device_destroy(cl_dsc, MKDEV(major, 0));
+   class_destroy(cl_dsc);
    unregister_chrdev(major, DEV_NAME);
 }
    
