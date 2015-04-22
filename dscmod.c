@@ -70,7 +70,7 @@ static ssize_t dsc_read(struct file *filp, char *buffer, size_t length, loff_t *
 
 }
 static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t *off) {
-    printk ("<1>Sorry, this operation isn't supported.\n");
+    printk (KERN_ERR "Sorry, this operation isn't supported.\n");
     return -EINVAL;
 }
 
