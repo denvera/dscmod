@@ -7,6 +7,8 @@
 
 #include <linux/device.h>
 #include <linux/fs.h>
+#include <linux/kfifo.h>
+#include <linux/mutex.h>
 #include <asm/uaccess.h>
 #include <asm/errno.h>
 
@@ -14,9 +16,14 @@
 
 #define VERSION "0.1"
 #define DEV_NAME "dsc"
+#define FIFO_SIZE 1024
+#define MSG_FIFO_MAX 128
 #define BUF_LEN 128
 #define MS_TO_NS(x) (x * 1E6L)
 
+
+static DEFINE_MUTEX(dsc_mutex);
+static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
 
 static int dsc_open(struct inode *, struct file *);
 static int dsc_release(struct inode *, struct file *);
@@ -45,14 +52,43 @@ static struct file_operations fops = {
     .release = dsc_release
 };
 
-static char msg[BUF_LEN];
+static int dsc_msg_idx_rd = 0, dsc_msg_idx_wr = 0;
+static int msg_len[MSG_FIFO_MAX];
+static char cur_msg[BUF_LEN];
 
 static int keybus_irqs[] = { -1, -1 };
 static int blink_delay = 100;
 
+static char bit_counter = 0;
+static bool start_bit = true;
+
 static irqreturn_t clk_isr(int irq, void *data) {
+/*    if (start_bit) {
+        start_bit = false;
+        return;
+    }
+*/ // Only triggered on rising edge, don't need above
+    //
+    // Start clock
+    // Read bit
+    //cur_msg[bit_counter++] = gpio_get_value();
+    // Reset clock
 
     return IRQ_HANDLED;
+}
+
+static int dsc_msg_to_fifo(char *msg, int msg_len) {
+    unsigned int copied;
+    if (kfifo_avail(&dsc_msg_fifo) < msg_len) {
+        printk (KERN_ERR "dsc: No space left in FIFO\n");
+        return -ENOSPC;
+    }
+    copied = kfifo_in(&dsc_msg_fifo, msg, msg_len);
+    if (copied != msg_len) {
+        printk (KERN_ERR "dsc: Short write to FIFO: %d\/%dn", copied, msg_len);
+    }
+    dsc_msg_idx_wr = (dsc_msg_idx_wr+1) % MSG_FIFO_MAX;
+    return copied;
 }
 
 static int dsc_open(struct inode *inode, struct file *file) {
@@ -176,6 +212,7 @@ static void __exit dsc_exit(void)
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Denver Abrey");
 MODULE_DESCRIPTION("Kernel module to speak DSC KeyBus via GPIO");
+MODULE_VERSION(VERSION);
 
 module_init(dsc_init);
 module_exit(dsc_exit);
