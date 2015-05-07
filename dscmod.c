@@ -65,11 +65,11 @@ static char cur_msg[BUF_LEN];
 static int keybus_irqs[] = { -1, -1 };
 static int blink_delay = 100;
 
-static char bit_counter = 0;
-static bool start_bit = true;
+static unsigned int bit_counter = 0;
+//static bool start_bit = true;
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
-    dsc_msg_to_fifo(&cur_msg, bit_counter);
+    dsc_msg_to_fifo(cur_msg, bit_counter);
     bit_counter = 0;
 
     return HRTIMER_NORESTART;
@@ -100,7 +100,7 @@ static int dsc_msg_to_fifo(char *msg, int len) {
     }
     copied = kfifo_in(&dsc_msg_fifo, msg, len);
     if (copied != len) {
-        printk (KERN_ERR "dsc: Short write to FIFO: %d/%dn", copied, msg_len);
+        printk (KERN_ERR "dsc: Short write to FIFO: %d/%dn", copied, len);
     }
     msg_len[dsc_msg_idx_wr] = copied;
     dsc_msg_idx_wr = (dsc_msg_idx_wr+1) % MSG_FIFO_MAX;
@@ -171,7 +171,7 @@ int ungpio_irq(void) {
 static int __init dsc_init(void)
 {
     int ret = 0;
-    void *ptr_err;
+    void *ptr_err = NULL;
 
     struct timeval tv = ktime_to_timeval(ktime_get_real());
     printk(KERN_INFO "DSC GPIO v%s at %d\n", VERSION, (int)tv.tv_sec);
