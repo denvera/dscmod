@@ -12,6 +12,8 @@
 #include <asm/uaccess.h>
 #include <asm/errno.h>
 
+#include "dscmod.h"
+
 #define LINUX
 
 #define VERSION "0.1"
@@ -20,7 +22,7 @@
 #define MSG_FIFO_MAX 128
 #define BUF_LEN 128
 #define MS_TO_NS(x) (x * 1E6L)
-
+#define MSG_POST_WAIT_MS 10
 
 static DEFINE_MUTEX(dsc_mutex);
 static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
@@ -42,6 +44,7 @@ static struct gpio leds[] = {
 
 static char dev_open = 0;
 static int major;
+
 static struct class *cl_dsc;
 static struct device *dev_dsc;
 
@@ -51,6 +54,9 @@ static struct file_operations fops = {
     .open = dsc_open,
     .release = dsc_release
 };
+
+static struct hrtimer msg_timer;
+static ktime_t msg_ktime;
 
 static int dsc_msg_idx_rd = 0, dsc_msg_idx_wr = 0;
 static int msg_len[MSG_FIFO_MAX];
@@ -62,6 +68,13 @@ static int blink_delay = 100;
 static char bit_counter = 0;
 static bool start_bit = true;
 
+static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
+    dsc_msg_to_fifo(&cur_msg, bit_counter);
+    bit_counter = 0;
+
+    return HRTIMER_NORESTART;
+}
+
 static irqreturn_t clk_isr(int irq, void *data) {
 /*    if (start_bit) {
         start_bit = false;
@@ -70,23 +83,26 @@ static irqreturn_t clk_isr(int irq, void *data) {
 */ // Only triggered on rising edge, don't need above
     //
     // Start clock
+    hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     // Read bit
-    //cur_msg[bit_counter++] = gpio_get_value();
+    cur_msg[bit_counter++] = gpio_get_value(keybus[1].gpio);
     // Reset clock
+    hrtimer_forward_now(&msg_timer, msg_ktime);
 
     return IRQ_HANDLED;
 }
 
-static int dsc_msg_to_fifo(char *msg, int msg_len) {
+static int dsc_msg_to_fifo(char *msg, int len) {
     unsigned int copied;
-    if (kfifo_avail(&dsc_msg_fifo) < msg_len) {
+    if (kfifo_avail(&dsc_msg_fifo) < len) {
         printk (KERN_ERR "dsc: No space left in FIFO\n");
         return -ENOSPC;
     }
-    copied = kfifo_in(&dsc_msg_fifo, msg, msg_len);
-    if (copied != msg_len) {
-        printk (KERN_ERR "dsc: Short write to FIFO: %d\/%dn", copied, msg_len);
+    copied = kfifo_in(&dsc_msg_fifo, msg, len);
+    if (copied != len) {
+        printk (KERN_ERR "dsc: Short write to FIFO: %d/%dn", copied, msg_len);
     }
+    msg_len[dsc_msg_idx_wr] = copied;
     dsc_msg_idx_wr = (dsc_msg_idx_wr+1) % MSG_FIFO_MAX;
     return copied;
 }
@@ -100,9 +116,16 @@ static int dsc_release(struct inode *inode, struct file *file) {
     dev_open--;
     return 0;
 }
-static ssize_t dsc_read(struct file *filp, char *buffer, size_t length, loff_t *offset) {
-    int bytes_read = 0;
-    return 0;
+static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, loff_t *offset) {
+    int retval;
+    unsigned int copied;
+    if (kfifo_is_empty(&dsc_msg_fifo)) {
+        printk (KERN_WARNING "dsc: FIFO empty\n");
+        return 0;
+    }
+    retval = kfifo_to_user(&dsc_msg_fifo, buffer, msg_len[dsc_msg_idx_rd], &copied);
+    dsc_msg_idx_rd = dsc_msg_idx_rd + 1 % MSG_FIFO_MAX;
+    return retval ? retval : copied;
 
 }
 static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t *off) {
@@ -129,6 +152,14 @@ int gpio_irq(void) {
     return 0;
 }
 
+static int dsc_init_timer(void) {
+    // MSG_POST_WAIT_MS
+    msg_ktime = ktime_set(0, MS_TO_NS(MSG_POST_WAIT_MS));
+    hrtimer_init(&msg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    msg_timer.function = &msg_timer_callback;
+    return 0;
+}
+
 int ungpio_irq(void) {
     free_irq(keybus_irqs[0], NULL);
     gpio_free_array(leds, ARRAY_SIZE(leds));
@@ -144,7 +175,7 @@ static int __init dsc_init(void)
 
     struct timeval tv = ktime_to_timeval(ktime_get_real());
     printk(KERN_INFO "DSC GPIO v%s at %d\n", VERSION, (int)tv.tv_sec);
-
+    dsc_init_timer();
     major = register_chrdev(0, DEV_NAME, &fops);
     if (major < 0)
         goto err_cl_create;
