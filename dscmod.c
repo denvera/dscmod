@@ -129,8 +129,15 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
 
 }
 static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t *off) {
-    printk (KERN_ERR "Sorry, this operation isn't supported.\n");
-    return -EINVAL;
+    //printk (KERN_ERR "dsc: Sorry, this operation isn't supported.\n");
+    //return -EINVAL;
+    char kbuf[FIFO_SIZE];
+    int copy_max = len < FIFO_SIZE ? len : FIFO_SIZE;
+    copy_from_user(kbuf, buff, copy_max);
+    dsc_msg_to_fifo(kbuf, copy_max);
+    bit_counter = copy_max;
+    hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
+    return copy_max;
 }
 
 
@@ -175,7 +182,9 @@ static int __init dsc_init(void)
 
     struct timeval tv = ktime_to_timeval(ktime_get_real());
     printk(KERN_INFO "DSC GPIO v%s at %d\n", VERSION, (int)tv.tv_sec);
+    INIT_KFIFO(dsc_msg_fifo);
     dsc_init_timer();
+
     major = register_chrdev(0, DEV_NAME, &fops);
     if (major < 0)
         goto err_cl_create;
