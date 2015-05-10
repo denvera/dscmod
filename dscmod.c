@@ -83,8 +83,12 @@ static irqreturn_t clk_isr(int irq, void *data) {
 */ // Only triggered on rising edge, don't need above
     //
     // Start clock
-    hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     // Read bit
+    if (bit_counter >= 127) {
+        printk (KERN_ERR "dsc: overflowed bit counter\n");    
+        return IRQ_HANDLED;
+    }
+    hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     cur_msg[bit_counter++] = gpio_get_value(keybus[1].gpio);
     // Reset clock
     hrtimer_forward_now(&msg_timer, msg_ktime);
