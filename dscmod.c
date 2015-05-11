@@ -93,7 +93,7 @@ static irqreturn_t clk_isr(int irq, void *data) {
     cur_msg[bit_counter++] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
     if (bit_counter == 8 || bit_counter == 10) {
         cur_msg[bit_counter++] = ' ';
-    } else if (bit_counter > 10 && (bit_counter - 10) % 8 == 0) {
+    } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
         cur_msg[bit_counter++] = ' ';
     }
     // Reset clock
