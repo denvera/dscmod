@@ -69,6 +69,7 @@ static unsigned int bit_counter = 0;
 //static bool start_bit = true;
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
+    cur_msg[bit_counter++] = '\n';
     dsc_msg_to_fifo(cur_msg, bit_counter);
     bit_counter = 0;
 
