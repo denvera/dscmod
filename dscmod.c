@@ -22,7 +22,7 @@
 #define MSG_FIFO_MAX 1024
 #define BUF_LEN 1024
 #define MS_TO_NS(x) (x * 1E6L)
-#define MSG_POST_WAIT_MS 10
+#define MSG_POST_WAIT_MS 5
 
 static DEFINE_MUTEX(dsc_mutex);
 static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
