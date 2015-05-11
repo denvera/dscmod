@@ -19,7 +19,7 @@
 #define VERSION "0.1"
 #define DEV_NAME "dsc"
 #define FIFO_SIZE 1024
-#define MSG_FIFO_MAX 128
+#define MSG_FIFO_MAX 1024
 #define BUF_LEN 1024
 #define MS_TO_NS(x) (x * 1E6L)
 #define MSG_POST_WAIT_MS 10
@@ -84,7 +84,7 @@ static irqreturn_t clk_isr(int irq, void *data) {
     //
     // Start clock
     // Read bit
-    if (bit_counter >= 127) {
+    if (bit_counter >= BUF_LEN-1) {
         printk (KERN_ERR "dsc: overflowed bit counter\n");    
         return IRQ_HANDLED;
     }
@@ -250,10 +250,12 @@ err_cl_create:
 static void __exit dsc_exit(void)
 {
    printk(KERN_INFO "Unloading DSC GPIO\n");
+   hrtimer_cancel(&msg_timer);
    ungpio_irq();
    device_destroy(cl_dsc, MKDEV(major, 0));
    class_destroy(cl_dsc);
    unregister_chrdev(major, DEV_NAME);
+
 }
    
 
