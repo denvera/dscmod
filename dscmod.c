@@ -20,7 +20,7 @@
 #define DEV_NAME "dsc"
 #define FIFO_SIZE 1024
 #define MSG_FIFO_MAX 128
-#define BUF_LEN 128
+#define BUF_LEN 1024
 #define MS_TO_NS(x) (x * 1E6L)
 #define MSG_POST_WAIT_MS 10
 
@@ -90,6 +90,11 @@ static irqreturn_t clk_isr(int irq, void *data) {
     }
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     cur_msg[bit_counter++] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
+    if (bit_counter == 8) {
+        cur_msg[bit_counter++] == ' ';
+    } else if (bit_counter > 8 && (bit_counter - 9) % 8 == 0) {
+        cur_msg[bit_counter++] = ' ';
+    }
     // Reset clock
     hrtimer_forward_now(&msg_timer, msg_ktime);
 
