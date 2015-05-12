@@ -9,6 +9,7 @@
 #include <linux/fs.h>
 #include <linux/kfifo.h>
 #include <linux/mutex.h>
+#include <linux/wait.h>
 #include <asm/uaccess.h>
 #include <asm/errno.h>
 
@@ -26,6 +27,7 @@
 
 static DEFINE_MUTEX(dsc_mutex);
 static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
+static DECLARE_WAIT_QUEUE_HEAD(wq);
 
 static int dsc_open(struct inode *, struct file *);
 static int dsc_release(struct inode *, struct file *);
@@ -71,6 +73,7 @@ static unsigned int bit_counter = 0;
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
     cur_msg[bit_counter++] = '\n';
     dsc_msg_to_fifo(cur_msg, bit_counter);
+    wake_up_interruptible(&wq);
     bit_counter = 0;
 
     return HRTIMER_NORESTART;
@@ -129,10 +132,12 @@ static int dsc_release(struct inode *inode, struct file *file) {
 static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, loff_t *offset) {
     int retval;
     unsigned int copied;
-    if (kfifo_is_empty(&dsc_msg_fifo)) {
+/*    if (kfifo_is_empty(&dsc_msg_fifo)) {
         printk (KERN_WARNING "dsc: FIFO empty\n");
         return 0;
     }
+*/
+    wait_event_interruptible(wq, !kfifo_is_empty(&dsc_msg_fifo));
     retval = kfifo_to_user(&dsc_msg_fifo, buffer, msg_len[dsc_msg_idx_rd], &copied);
     dsc_msg_idx_rd = dsc_msg_idx_rd + 1 % MSG_FIFO_MAX;
     return retval ? retval : copied;
