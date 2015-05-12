@@ -4,7 +4,7 @@
 #include <linux/interrupt.h> 
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
-
+#include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/kfifo.h>
@@ -47,6 +47,8 @@ static struct gpio leds[] = {
 static char dev_open = 0;
 static int major;
 
+static int dsc_major, dsc_minor;
+
 static struct class *cl_dsc;
 static struct device *dev_dsc;
 
@@ -69,6 +71,21 @@ static int blink_delay = 100;
 
 static unsigned int bit_counter = 0;
 //static bool start_bit = true;
+
+struct dsc_dev {    
+    int idx_r;
+    int idx_w;
+    struct kfifo r_fifo;
+    struct kfifo w_fifo;
+    int msg_len[MSG_FIFO_MAX];
+    char cur_msg[BUF_LEN];
+    bool binary;
+    char *name;
+    struct semaphore sem;
+    struct cdev cdev;        
+};
+
+static struct dsc_dev dsc_txt = { .binary = false, .name = "dsc_txt" }, dsc_bin = { .binary = true, .name = "dsc_bin" };
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
     if (dev_open) {
@@ -156,9 +173,13 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
 static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t *off) {
     //printk (KERN_ERR "dsc: Sorry, this operation isn't supported.\n");
     //return -EINVAL;
+    int ret;
     char kbuf[FIFO_SIZE];
-    int copy_max = len < FIFO_SIZE ? len : FIFO_SIZE;
-    copy_from_user(kbuf, buff, copy_max);
+    int copy_max = len < FIFO_SIZE ? len : FIFO_SIZE;    
+    ret = copy_from_user(kbuf, buff, copy_max);
+    if (ret != len) {
+        printk(KERN_WARNING "dsc: short write: %d/%d\n", ret, len);
+    }
     dsc_msg_to_fifo(kbuf, copy_max);
     bit_counter = copy_max;
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
@@ -198,6 +219,28 @@ int ungpio_irq(void) {
     gpio_free_array(keybus, ARRAY_SIZE(keybus));
 
     return 0;
+}
+
+int init_dsc_dev(struct dsc_dev *d, int index) {
+    int ret1, ret2;
+    d->idx_r = 0;
+    d->idx_w = 0;
+    dev_t dev;
+    ret1 = kfifo_alloc(&(d->r_fifo), FIFO_SIZE, GFP_KERNEL);
+    ret2 = kfifo_alloc(&(d->w_fifo), FIFO_SIZE, GFP_KERNEL);
+    if (ret1 || ret2) {
+        printk(KERN_ERR "dsc: error in kfifo_alloc\n");
+    }
+    cdev_init(&d->cdev, &fops);
+    ret1 = alloc_chrdev_region(&dev, 0, 1, d->name);
+    dsc_major = MAJOR(dev);
+    if (ret1 < 0) {
+        printk(KERN_WARNING "dsc: couldn't get major %d\n", dsc_major);
+    }
+    cdev_add(&d->cdev, dev, 1);
+
+    return (ret1 | ret2);
+
 }
     
 static int __init dsc_init(void)
