@@ -139,7 +139,7 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
 */
     wait_event_interruptible(wq, !kfifo_is_empty(&dsc_msg_fifo));
     retval = kfifo_to_user(&dsc_msg_fifo, buffer, msg_len[dsc_msg_idx_rd], &copied);
-    dsc_msg_idx_rd = dsc_msg_idx_rd + 1 % MSG_FIFO_MAX;
+    dsc_msg_idx_rd = (dsc_msg_idx_rd + 1) % MSG_FIFO_MAX;
     return retval ? retval : copied;
 
 }
