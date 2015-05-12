@@ -75,6 +75,9 @@ static unsigned int bit_counter = 0;
 struct dsc_dev {    
     int idx_r;
     int idx_w;
+    dev_t dev;
+    struct class *cl;
+    struct device *dv;
     struct kfifo r_fifo;
     struct kfifo w_fifo;
     int msg_len[MSG_FIFO_MAX];
@@ -223,26 +226,48 @@ int ungpio_irq(void) {
 
 int init_dsc_dev(struct dsc_dev *d, int index) {
     int ret1, ret2;
+    dev_t dev;
     d->idx_r = 0;
     d->idx_w = 0;
-    dev_t dev;
     ret1 = kfifo_alloc(&(d->r_fifo), FIFO_SIZE, GFP_KERNEL);
     ret2 = kfifo_alloc(&(d->w_fifo), FIFO_SIZE, GFP_KERNEL);
     if (ret1 || ret2) {
         printk(KERN_ERR "dsc: error in kfifo_alloc\n");
+        return -1;
     }
     cdev_init(&d->cdev, &fops);
     ret1 = alloc_chrdev_region(&dev, 0, 1, d->name);
     dsc_major = MAJOR(dev);
     if (ret1 < 0) {
         printk(KERN_WARNING "dsc: couldn't get major %d\n", dsc_major);
+        return -1;
     }
-    cdev_add(&d->cdev, dev, 1);
-
+    ret2 = cdev_add(&d->cdev, dev, 1);
+    if (ret2) {
+        printk (KERN_WARNING "dsc: error %d adding device\n", ret2);
+        return ret2;
+    }
+    d->cl = class_create(THIS_MODULE, d->name);
+    if (IS_ERR(d->cl)) {
+        printk (KERN_WARNING "dsc: error creating class\n");
+        return -1;
+    }
+    d->dv = device_create(d->cl, NULL, dev, NULL, d->name);
+    if (IS_ERR(d->dv)) {
+        printk (KERN_WARNING "dsc: error creating dev\n");
+        class_destroy(d->cl);
+        return -1;
+    }
+    d->dev = dev;
     return (ret1 | ret2);
 
 }
-    
+
+void destroy_dsc_dev(struct dsc_dev *d) {
+   device_destroy(d->cl, d->dev);
+   class_destroy(d->cl);
+}
+ 
 static int __init dsc_init(void)
 {
     int ret = 0;
@@ -286,7 +311,7 @@ static int __init dsc_init(void)
     } else {
         printk(KERN_INFO "IRQ setup successful\n");
     }
-
+    init_dsc_dev(&dsc_txt, 0);
 
     return 0;
 fail2:
@@ -314,6 +339,7 @@ static void __exit dsc_exit(void)
    device_destroy(cl_dsc, MKDEV(major, 0));
    class_destroy(cl_dsc);
    unregister_chrdev(major, DEV_NAME);
+   destroy_dsc_dev(&dsc_txt);
 
 }
    
