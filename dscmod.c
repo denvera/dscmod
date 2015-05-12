@@ -137,8 +137,16 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
         return 0;
     }
 */
-    wait_event_interruptible(wq, !kfifo_is_empty(&dsc_msg_fifo));
+    if (wait_event_interruptible(wq, !kfifo_is_empty(&dsc_msg_fifo))) {
+        printk (KERN_WARNING "dsc: read: restart syscall\n");
+        return -ERESTARTSYS;
+    }
     retval = kfifo_to_user(&dsc_msg_fifo, buffer, msg_len[dsc_msg_idx_rd], &copied);
+    if (retval == 0 && (copied != msg_len[dsc_msg_idx_rd])) {
+        printk (KERN_WARNING "dsc: Short read from fifo: %d/%d\n", copied, msg_len[dsc_msg_idx_rd]);
+    } else if (retval != 0) {
+        printk (KERN_WARNING "dsc: Error reading from kfifo: %d\n", retval);
+    }
     dsc_msg_idx_rd = (dsc_msg_idx_rd + 1) % MSG_FIFO_MAX;
     return retval ? retval : copied;
 
