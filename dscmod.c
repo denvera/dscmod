@@ -23,8 +23,8 @@
 #define MSG_FIFO_MAX 1024
 #define BUF_LEN 1024
 #define MS_TO_NS(x) (x * 1E6L)
-#define MSG_POST_WAIT_MS 5
-#define DSC_NUM_DEVS 2
+#define MSG_POST_WAIT_MS 3
+#define DSC_NUM_DEVS 1
 
 static DEFINE_MUTEX(dsc_mutex);
 static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
@@ -94,14 +94,18 @@ static struct dsc_dev dsc_txt = { .binary = false, .name = "dsc_txt" }, dsc_bin 
 static struct dsc_dev * dsc_devs[] = { &dsc_txt, &dsc_bin };
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
-    int i;
+    int i, copied = 0;
     if (dev_open) {        
         cur_msg[bit_counter++] = '\n';
-        dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
+        //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
-            dsc_msg_to_fifo(&(dsc_devs[i]->w_fifo), cur_msg, bit_counter);
+            copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
+            if (copied != -ENOSPC) {
+                dsc_devs[i]->msg_len[dsc_devs[i]->idx_w] = copied;
+                dsc_devs[i]->idx_w = (dsc_devs[i]->idx_w + 1) % MSG_FIFO_MAX;
+                wake_up_interruptible(&wq);
+            }
         }
-        wake_up_interruptible(&wq);
     }
     bit_counter = 0;
 
@@ -136,25 +140,24 @@ static irqreturn_t clk_isr(int irq, void *data) {
 
 static int dsc_msg_to_fifo(struct kfifo *fifo, char *msg, int len) {
     unsigned int copied;
-    if (kfifo_avail(&dsc_msg_fifo) < len) {
-        printk (KERN_ERR "dsc: No space left in FIFO\n");
+    if (kfifo_avail(fifo) < len) {
+        printk (KERN_ERR "dsc: No space left in FIFO for %d\n", len);
         return -ENOSPC;
     }
-    copied = kfifo_in(&dsc_msg_fifo, msg, len);
+    copied = kfifo_in(fifo, msg, len);
     if (copied != len) {
         printk (KERN_ERR "dsc: Short write to FIFO: %d/%dn", copied, len);
     }
-    msg_len[dsc_msg_idx_wr] = copied;
-    dsc_msg_idx_wr = (dsc_msg_idx_wr+1) % MSG_FIFO_MAX;
+    //msg_len[dsc_msg_idx_wr] = copied;
+    //dsc_msg_idx_wr = (dsc_msg_idx_wr+1) % MSG_FIFO_MAX;
     return copied;
 }
 
 static int dsc_open(struct inode *inode, struct file *filp) {
+    if (dev_open) return -EBUSY;
     struct dsc_dev *dev;
     dev = container_of(inode->i_cdev, struct dsc_dev, cdev);
     filp->private_data = dev;
-
-    if (dev_open) return -EBUSY;
     dev_open++;
     return 0;
 }
@@ -170,6 +173,21 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
         return 0;
     }
 */
+    struct dsc_dev *d = filp->private_data;
+    struct kfifo *fifo = &d->r_fifo;
+    if (wait_event_interruptible(wq, !kfifo_is_empty(fifo))) {
+        printk (KERN_WARNING "dsc: read: restart syscall\n");
+        return -ERESTARTSYS;
+    }
+    retval = kfifo_to_user(fifo, buffer, d->msg_len[d->idx_r], &copied);
+    if (retval == 0 && (copied != d->msg_len[d->idx_r])) {
+        printk (KERN_WARNING "dsc: Short read from fifo: %d/%d\n", copied, d->msg_len[d->idx_r]);
+    } else if (retval != 0) {
+        printk (KERN_WARNING "dsc: Error reading from kfifo: %d\n", retval);
+    }
+    d->idx_r = (d->idx_r + 1) % MSG_FIFO_MAX;
+
+/*
     if (wait_event_interruptible(wq, !kfifo_is_empty(&dsc_msg_fifo))) {
         printk (KERN_WARNING "dsc: read: restart syscall\n");
         return -ERESTARTSYS;
@@ -181,6 +199,7 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
         printk (KERN_WARNING "dsc: Error reading from kfifo: %d\n", retval);
     }
     dsc_msg_idx_rd = (dsc_msg_idx_rd + 1) % MSG_FIFO_MAX;
+*/
     return retval ? retval : copied;
 
 }
