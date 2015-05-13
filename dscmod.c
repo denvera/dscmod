@@ -24,6 +24,7 @@
 #define BUF_LEN 1024
 #define MS_TO_NS(x) (x * 1E6L)
 #define MSG_POST_WAIT_MS 5
+#define DSC_NUM_DEVS 2
 
 static DEFINE_MUTEX(dsc_mutex);
 static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
@@ -90,10 +91,16 @@ struct dsc_dev {
 
 static struct dsc_dev dsc_txt = { .binary = false, .name = "dsc_txt" }, dsc_bin = { .binary = true, .name = "dsc_bin" };
 
+static struct dsc_dev * dsc_devs[] = { &dsc_txt, &dsc_bin };
+
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
-    if (dev_open) {
+    int i;
+    if (dev_open) {        
         cur_msg[bit_counter++] = '\n';
-        dsc_msg_to_fifo(cur_msg, bit_counter);
+        dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
+        for (i = 0; i < DSC_NUM_DEVS; i++) {
+            dsc_msg_to_fifo(&(dsc_devs[i]->w_fifo), cur_msg, bit_counter);
+        }
         wake_up_interruptible(&wq);
     }
     bit_counter = 0;
@@ -127,7 +134,7 @@ static irqreturn_t clk_isr(int irq, void *data) {
     return IRQ_HANDLED;
 }
 
-static int dsc_msg_to_fifo(char *msg, int len) {
+static int dsc_msg_to_fifo(struct kfifo *fifo, char *msg, int len) {
     unsigned int copied;
     if (kfifo_avail(&dsc_msg_fifo) < len) {
         printk (KERN_ERR "dsc: No space left in FIFO\n");
@@ -142,7 +149,11 @@ static int dsc_msg_to_fifo(char *msg, int len) {
     return copied;
 }
 
-static int dsc_open(struct inode *inode, struct file *file) {
+static int dsc_open(struct inode *inode, struct file *filp) {
+    struct dsc_dev *dev;
+    dev = container_of(inode->i_cdev, struct dsc_dev, cdev);
+    filp->private_data = dev;
+
     if (dev_open) return -EBUSY;
     dev_open++;
     return 0;
@@ -183,7 +194,7 @@ static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t
     if (ret != len) {
         printk(KERN_WARNING "dsc: short write: %d/%d\n", ret, len);
     }
-    dsc_msg_to_fifo(kbuf, copy_max);
+    dsc_msg_to_fifo(&dsc_msg_fifo, kbuf, copy_max);
     bit_counter = copy_max;
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     return copy_max;

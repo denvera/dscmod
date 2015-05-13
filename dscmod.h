@@ -2,7 +2,7 @@
 #define _DSCMOD_H
 
 
-static int dsc_msg_to_fifo(char *msg, int msg_len);
+static int dsc_msg_to_fifo(struct kfifo *, char *msg, int msg_len);
 
 
 #endif
