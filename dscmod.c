@@ -24,7 +24,7 @@
 #define BUF_LEN 1024
 #define MS_TO_NS(x) (x * 1E6L)
 #define MSG_POST_WAIT_MS 3
-#define DSC_NUM_DEVS 1
+#define DSC_NUM_DEVS 2
 
 static DEFINE_MUTEX(dsc_mutex);
 static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
@@ -66,11 +66,14 @@ static ktime_t msg_ktime;
 static int dsc_msg_idx_rd = 0, dsc_msg_idx_wr = 0;
 static int msg_len[MSG_FIFO_MAX];
 static char cur_msg[BUF_LEN];
+static char cur_msg_bin[BUF_LEN];
 
 static int keybus_irqs[] = { -1, -1 };
 static int blink_delay = 100;
 
 static unsigned int bit_counter = 0;
+static unsigned int bin_bit_counter = 0;
+static unsigned int byte_counter = 0;
 //static bool start_bit = true;
 
 struct dsc_dev {    
@@ -99,7 +102,11 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
         cur_msg[bit_counter++] = '\n';
         //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
-            copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
+            if (!dsc_devs[i]->binary) {
+                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
+            } else {
+                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter);
+            }
             if (copied != -ENOSPC) {
                 dsc_devs[i]->msg_len[dsc_devs[i]->idx_w] = copied;
                 dsc_devs[i]->idx_w = (dsc_devs[i]->idx_w + 1) % MSG_FIFO_MAX;
@@ -108,6 +115,8 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
         }
     }
     bit_counter = 0;
+    bin_bit_counter = 0;
+    byte_counter = 0;
 
     return HRTIMER_NORESTART;
 }
@@ -126,11 +135,19 @@ static irqreturn_t clk_isr(int irq, void *data) {
         return IRQ_HANDLED;
     }
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
-    cur_msg[bit_counter++] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
+      
+    cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
+    cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << bin_bit_counter++);
+    bit_counter++;
+    
     if (bit_counter == 8 || bit_counter == 10) {
         cur_msg[bit_counter++] = ' ';
+        byte_counter++;
+        bin_bit_counter = 0;
     } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
         cur_msg[bit_counter++] = ' ';
+        byte_counter ++;
+        bin_bit_counter = 0;
     }
     // Reset clock
     hrtimer_forward_now(&msg_timer, msg_ktime);
@@ -342,6 +359,7 @@ static int __init dsc_init(void)
         printk(KERN_INFO "IRQ setup successful\n");
     }
     init_dsc_dev(&dsc_txt, 0);
+    init_dsc_dev(&dsc_bin, 1);
 
     return 0;
 fail2:
@@ -370,6 +388,7 @@ static void __exit dsc_exit(void)
    class_destroy(cl_dsc);
    unregister_chrdev(major, DEV_NAME);
    destroy_dsc_dev(&dsc_txt);
+   destroy_dsc_dev(&dsc_bin);
 
 }
    
