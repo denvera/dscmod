@@ -10,6 +10,7 @@
 #include <linux/kfifo.h>
 #include <linux/mutex.h>
 #include <linux/wait.h>
+#include <linux/string.h>
 #include <asm/uaccess.h>
 #include <asm/errno.h>
 
@@ -66,7 +67,7 @@ static ktime_t msg_ktime;
 static int dsc_msg_idx_rd = 0, dsc_msg_idx_wr = 0;
 static int msg_len[MSG_FIFO_MAX];
 static char cur_msg[BUF_LEN];
-static char cur_msg_bin[BUF_LEN];
+static unsigned char cur_msg_bin[BUF_LEN];
 
 static int keybus_irqs[] = { -1, -1 };
 static int blink_delay = 100;
@@ -98,14 +99,16 @@ static struct dsc_dev * dsc_devs[] = { &dsc_txt, &dsc_bin };
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
     int i, copied = 0;
-    if (dev_open) {        
+    if (dev_open || 0) {        
         cur_msg[bit_counter++] = '\n';
+        //cur_msg_bin[++byte_counter] = '\n';
         //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
             if (!dsc_devs[i]->binary) {
                 copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
             } else {
-                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter);
+                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
+                //memset(cur_msg_bin, 0, BUF_LEN);
             }
             if (copied != -ENOSPC) {
                 dsc_devs[i]->msg_len[dsc_devs[i]->idx_w] = copied;
@@ -117,6 +120,7 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
     bit_counter = 0;
     bin_bit_counter = 0;
     byte_counter = 0;
+    memset(cur_msg_bin, 0, BUF_LEN);
 
     return HRTIMER_NORESTART;
 }
@@ -137,17 +141,27 @@ static irqreturn_t clk_isr(int irq, void *data) {
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
       
     cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
-    cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << bin_bit_counter++);
+    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7-bin_bit_counter++));
+    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7 - bin_bit_counter % 8));
+    cur_msg_bin[byte_counter] = (cur_msg_bin[byte_counter] << 1) | (cur_msg[bit_counter] == '0' ? 0 : 1);
+    bin_bit_counter++;
+    if (bin_bit_counter % 8 == 0) {
+        byte_counter++;
+    } else if (bin_bit_counter == 9) {
+        bin_bit_counter += 7;
+        byte_counter++;
+    }
+    
     bit_counter++;
     
     if (bit_counter == 8 || bit_counter == 10) {
         cur_msg[bit_counter++] = ' ';
-        byte_counter++;
-        bin_bit_counter = 0;
+        //byte_counter++;
+        //bin_bit_counter = 0;
     } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
         cur_msg[bit_counter++] = ' ';
-        byte_counter ++;
-        bin_bit_counter = 0;
+        //byte_counter ++;
+        //bin_bit_counter = 0;
     }
     // Reset clock
     hrtimer_forward_now(&msg_timer, msg_ktime);
@@ -175,6 +189,7 @@ static int dsc_open(struct inode *inode, struct file *filp) {
     struct dsc_dev *dev;
     dev = container_of(inode->i_cdev, struct dsc_dev, cdev);
     filp->private_data = dev;
+    //memset(cur_msg_bin, 0, BUF_LEN);
     dev_open++;
     return 0;
 }
@@ -184,7 +199,7 @@ static int dsc_release(struct inode *inode, struct file *file) {
 }
 static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, loff_t *offset) {
     int retval;
-    unsigned int copied;
+    unsigned int copied = 0;
 /*    if (kfifo_is_empty(&dsc_msg_fifo)) {
         printk (KERN_WARNING "dsc: FIFO empty\n");
         return 0;
@@ -196,7 +211,10 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
         printk (KERN_WARNING "dsc: read: restart syscall\n");
         return -ERESTARTSYS;
     }
-    retval = kfifo_to_user(fifo, buffer, d->msg_len[d->idx_r], &copied);
+    if (length < d->msg_len[d->idx_r]) {
+        printk (KERN_WARNING "dsc: stored msg longer than read\n");
+    }
+    retval = kfifo_to_user(fifo, buffer, (length >= d->msg_len[d->idx_r]) ? d->msg_len[d->idx_r] : length, &copied);
     if (retval == 0 && (copied != d->msg_len[d->idx_r])) {
         printk (KERN_WARNING "dsc: Short read from fifo: %d/%d\n", copied, d->msg_len[d->idx_r]);
     } else if (retval != 0) {
@@ -324,7 +342,7 @@ static int __init dsc_init(void)
     printk(KERN_INFO "DSC GPIO v%s at %d\n", VERSION, (int)tv.tv_sec);
     INIT_KFIFO(dsc_msg_fifo);
     dsc_init_timer();
-
+    memset(cur_msg_bin, 0, BUF_LEN);
     major = register_chrdev(0, DEV_NAME, &fops);
     if (major < 0)
         goto err_cl_create;
