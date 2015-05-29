@@ -24,7 +24,8 @@
 #define MSG_FIFO_MAX 1024
 #define BUF_LEN 1024
 #define MS_TO_NS(x) (x * 1E6L)
-#define MSG_POST_WAIT_MS 3
+#define US_TO_NS(x) (x * 1E3L)
+#define MSG_POST_WAIT_MS 5
 #define DSC_NUM_DEVS 2
 
 static DEFINE_MUTEX(dsc_mutex);
@@ -62,11 +63,15 @@ static struct file_operations fops = {
 };
 
 static struct hrtimer msg_timer;
-static ktime_t msg_ktime;
+static struct hrtimer bit_timer;
+static ktime_t msg_ktime, bit_ktime;
 
 static int dsc_msg_idx_rd = 0, dsc_msg_idx_wr = 0;
 static int msg_len[MSG_FIFO_MAX];
 static char cur_msg[BUF_LEN];
+
+static char cur_msg_c[BUF_LEN];
+
 static unsigned char cur_msg_bin[BUF_LEN];
 
 static int keybus_irqs[] = { -1, -1 };
@@ -100,14 +105,17 @@ static struct dsc_dev * dsc_devs[] = { &dsc_txt, &dsc_bin };
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
     int i, copied = 0;
     if (dev_open || 0) {        
-        cur_msg[bit_counter++] = '\n';
+        cur_msg[bit_counter] = '\n';
+        cur_msg_c[bit_counter] = '\n';
+        bit_counter++;
         //cur_msg_bin[++byte_counter] = '\n';
         //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
             if (!dsc_devs[i]->binary) {
                 copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
             } else {
-                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
+                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
+                // test //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
                 //memset(cur_msg_bin, 0, BUF_LEN);
             }
             if (copied != -ENOSPC) {
@@ -125,26 +133,26 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
     return HRTIMER_NORESTART;
 }
 
-static irqreturn_t clk_isr(int irq, void *data) {
-/*    if (start_bit) {
-        start_bit = false;
-        return;
-    }
-*/ // Only triggered on rising edge, don't need above
-    //
-    // Start clock
-    // Read bit
+static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
+    char bit;
+    bit = 48 + gpio_get_value(keybus[1].gpio);
+
     if (bit_counter >= BUF_LEN-1) {
         printk (KERN_ERR "dsc: overflowed bit counter\n");    
         return IRQ_HANDLED;
     }
-    hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
-      
-    cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
+
+    if (gpio_get_value(keybus[0].gpio) == 0) { //Falling
+        cur_msg_c[bit_counter] = bit;
+    } else {
+//        bit_counter++;
+
+        cur_msg[bit_counter] = bit;
     //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7-bin_bit_counter++));
     //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7 - bin_bit_counter % 8));
+    
     cur_msg_bin[byte_counter] = (cur_msg_bin[byte_counter] << 1) | (cur_msg[bit_counter] == '0' ? 0 : 1);
-    bin_bit_counter++;
+    //bin_bit_counter++;
     if (bin_bit_counter % 8 == 0) {
         byte_counter++;
     } else if (bin_bit_counter == 9) {
@@ -155,17 +163,78 @@ static irqreturn_t clk_isr(int irq, void *data) {
     bit_counter++;
     
     if (bit_counter == 8 || bit_counter == 10) {
-        cur_msg[bit_counter++] = ' ';
+        cur_msg[bit_counter] = ' ';
+        cur_msg_c[bit_counter++] = ' ';
         //byte_counter++;
         //bin_bit_counter = 0;
     } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
-        cur_msg[bit_counter++] = ' ';
+        cur_msg[bit_counter] = ' ';
+        cur_msg_c[bit_counter++] = ' ';
         //byte_counter ++;
         //bin_bit_counter = 0;
     }
     // Reset clock
     hrtimer_forward_now(&msg_timer, msg_ktime);
+    }
+    return HRTIMER_NORESTART;
+}
 
+static irqreturn_t clk_isr(int irq, void *data) {
+    char bit = '0';
+/*    if (start_bit) {
+        start_bit = false;
+        return;
+    }
+*/ // Only triggered on rising edge, don't need above
+    //
+    // Start clock
+    // Read bit
+    hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
+    hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
+/*
+    bit = 48 + gpio_get_value(keybus[1].gpio);
+
+    if (bit_counter >= BUF_LEN-1) {
+        printk (KERN_ERR "dsc: overflowed bit counter\n");    
+        return IRQ_HANDLED;
+    }
+      
+    if (gpio_get_value(keybus[0].gpio) == 0) { //Falling
+        cur_msg_c[bit_counter] = bit;
+    } else {
+
+        cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
+//        bit_counter++;
+
+    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7-bin_bit_counter++));
+    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7 - bin_bit_counter % 8));
+    
+    cur_msg_bin[byte_counter] = (cur_msg_bin[byte_counter] << 1) | (cur_msg[bit_counter] == '0' ? 0 : 1);
+    //bin_bit_counter++;
+    if (bin_bit_counter % 8 == 0) {
+        byte_counter++;
+    } else if (bin_bit_counter == 9) {
+        bin_bit_counter += 7;
+        byte_counter++;
+    }
+    
+    bit_counter++;
+    
+    if (bit_counter == 8 || bit_counter == 10) {
+        cur_msg[bit_counter] = ' ';
+        cur_msg_c[bit_counter++] = ' ';
+        //byte_counter++;
+        //bin_bit_counter = 0;
+    } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
+        cur_msg[bit_counter] = ' ';
+        cur_msg_c[bit_counter++] = ' ';
+        //byte_counter ++;
+        //bin_bit_counter = 0;
+    }
+    // Reset clock
+
+    hrtimer_forward_now(&msg_timer, msg_ktime);
+    }*/
     return IRQ_HANDLED;
 }
 
@@ -265,7 +334,7 @@ int gpio_irq(void) {
             return ret;
         }
         keybus_irqs[i] = ret;
-        ret = request_irq(keybus_irqs[i], clk_isr, IRQF_TRIGGER_RISING | IRQF_DISABLED, "dscmod#clk", NULL);
+        ret = request_irq(keybus_irqs[i], clk_isr, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING |  IRQF_DISABLED, "dscmod#clk", NULL);
         if (ret) {
             printk(KERN_ERR "Unable to request IRQ: %d\n", ret);
             return ret;
@@ -278,6 +347,10 @@ static int dsc_init_timer(void) {
     msg_ktime = ktime_set(0, MS_TO_NS(MSG_POST_WAIT_MS));
     hrtimer_init(&msg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     msg_timer.function = &msg_timer_callback;
+
+    bit_ktime = ktime_set(0, US_TO_NS(100));
+    hrtimer_init(&bit_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    bit_timer.function = &bit_timer_callback;
     return 0;
 }
 
