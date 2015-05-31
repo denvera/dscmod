@@ -30,6 +30,7 @@
 
 static DEFINE_MUTEX(dsc_mutex);
 static DECLARE_KFIFO(dsc_msg_fifo, char, FIFO_SIZE);
+static DECLARE_KFIFO(dsc_write_fifo, char, FIFO_SIZE);
 static DECLARE_WAIT_QUEUE_HEAD(wq);
 
 static int dsc_open(struct inode *, struct file *);
@@ -71,6 +72,9 @@ static int msg_len[MSG_FIFO_MAX];
 static char cur_msg[BUF_LEN];
 
 static char cur_msg_c[BUF_LEN];
+
+static char write_c;
+static bool writing = false;
 
 static unsigned char cur_msg_bin[BUF_LEN];
 
@@ -135,9 +139,25 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
 
 static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     char bit;
+    int n;
     bit = 48 + gpio_get_value(keybus[1].gpio);
 
     cur_msg_c[bit_counter] = bit;
+    if (bit_counter == 11 && !kfifo_is_empty(&dsc_write_fifo)) {
+        n = kfifo_get(&dsc_write_fifo, &write_c);
+        gpio_direction_output(keybus[1].gpio, (write_c >> (8-(bit_counter-11))) & 0x01);
+        writing = true;
+    }
+    if (writing && bit_counter >= 11 && bit_counter <= 18) {
+        //gpio_direction_output(keybus[1].gpio);
+        //gpio_set_value(keybus[1].gpio, (write_c >> (bit_counter-11)) & 0x01);
+        gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-11))) & 0x01);
+//        gpio_direction_input(keybus[1].gpio);
+    }
+    if (bit_counter > 18 && writing) {
+        writing = false;
+        gpio_direction_input(keybus[1].gpio);
+    }
 /*    
     //bin_bit_counter++;
     if (bin_bit_counter % 8 == 0) {
@@ -176,6 +196,10 @@ static irqreturn_t clk_isr(int irq, void *data) {
     //
     // Start clock
     // Read bit
+    if (writing) {
+        //gpio_set_value(keybus[1].gpio, 1);
+        gpio_direction_input(keybus[1].gpio);
+    }
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
 
@@ -291,12 +315,12 @@ static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t
     char kbuf[FIFO_SIZE];
     int copy_max = len < FIFO_SIZE ? len : FIFO_SIZE;    
     ret = copy_from_user(kbuf, buff, copy_max);
-    if (ret != len) {
-        printk(KERN_WARNING "dsc: short write: %d/%d\n", ret, len);
+    if (ret != 0) {
+        printk(KERN_WARNING "dsc: short write: %d/%d\n", copy_max-ret, len);
     }
-    dsc_msg_to_fifo(&dsc_msg_fifo, kbuf, copy_max);
-    bit_counter = copy_max;
-    hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
+    dsc_msg_to_fifo(&dsc_write_fifo, kbuf, copy_max);
+    //bit_counter = copy_max;
+    //hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     return copy_max;
 }
 
@@ -325,7 +349,7 @@ static int dsc_init_timer(void) {
     hrtimer_init(&msg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     msg_timer.function = &msg_timer_callback;
 
-    bit_ktime = ktime_set(0, US_TO_NS(700));
+    bit_ktime = ktime_set(0, US_TO_NS(400)); // 700 works ok for reading
     hrtimer_init(&bit_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     bit_timer.function = &bit_timer_callback;
     return 0;
@@ -391,6 +415,7 @@ static int __init dsc_init(void)
     struct timeval tv = ktime_to_timeval(ktime_get_real());
     printk(KERN_INFO "DSC GPIO v%s at %d\n", VERSION, (int)tv.tv_sec);
     INIT_KFIFO(dsc_msg_fifo);
+    INIT_KFIFO(dsc_write_fifo);
     dsc_init_timer();
     memset(cur_msg_bin, 0, BUF_LEN);
     major = register_chrdev(0, DEV_NAME, &fops);
