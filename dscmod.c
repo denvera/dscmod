@@ -145,10 +145,10 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     cur_msg_c[bit_counter] = bit;
     if (bit_counter == 11 && !kfifo_is_empty(&dsc_write_fifo)) {
         n = kfifo_get(&dsc_write_fifo, &write_c);
-        gpio_direction_output(keybus[1].gpio, (write_c >> (8-(bit_counter-11))) & 0x01);
+        gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-11))) & 0x01);
         writing = true;
     }
-    if (writing && bit_counter >= 11 && bit_counter <= 18) {
+    if (writing && bit_counter > 11 && bit_counter <= 18) {
         //gpio_direction_output(keybus[1].gpio);
         //gpio_set_value(keybus[1].gpio, (write_c >> (bit_counter-11)) & 0x01);
         gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-11))) & 0x01);
@@ -156,7 +156,7 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     }
     if (bit_counter > 18 && writing) {
         writing = false;
-        gpio_direction_input(keybus[1].gpio);
+        //gpio_direction_input(keybus[1].gpio);
     }
 /*    
     //bin_bit_counter++;
