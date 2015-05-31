@@ -137,21 +137,8 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     char bit;
     bit = 48 + gpio_get_value(keybus[1].gpio);
 
-    if (bit_counter >= BUF_LEN-1) {
-        printk (KERN_ERR "dsc: overflowed bit counter\n");    
-        return IRQ_HANDLED;
-    }
-
-    if (gpio_get_value(keybus[0].gpio) == 0) { //Falling
-        cur_msg_c[bit_counter] = bit;
-    } else {
-//        bit_counter++;
-
-        cur_msg[bit_counter] = bit;
-    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7-bin_bit_counter++));
-    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7 - bin_bit_counter % 8));
-    
-    cur_msg_bin[byte_counter] = (cur_msg_bin[byte_counter] << 1) | (cur_msg[bit_counter] == '0' ? 0 : 1);
+    cur_msg_c[bit_counter] = bit;
+/*    
     //bin_bit_counter++;
     if (bin_bit_counter % 8 == 0) {
         byte_counter++;
@@ -175,12 +162,12 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     }
     // Reset clock
     hrtimer_forward_now(&msg_timer, msg_ktime);
-    }
+*/
     return HRTIMER_NORESTART;
 }
 
 static irqreturn_t clk_isr(int irq, void *data) {
-    char bit = '0';
+    //char bit = '0';
 /*    if (start_bit) {
         start_bit = false;
         return;
@@ -191,26 +178,17 @@ static irqreturn_t clk_isr(int irq, void *data) {
     // Read bit
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
     hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
-/*
-    bit = 48 + gpio_get_value(keybus[1].gpio);
+
+    //bit = 48 + gpio_get_value(keybus[1].gpio);
 
     if (bit_counter >= BUF_LEN-1) {
         printk (KERN_ERR "dsc: overflowed bit counter\n");    
         return IRQ_HANDLED;
     }
       
-    if (gpio_get_value(keybus[0].gpio) == 0) { //Falling
-        cur_msg_c[bit_counter] = bit;
-    } else {
-
-        cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
-//        bit_counter++;
-
-    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7-bin_bit_counter++));
-    //cur_msg_bin[byte_counter] |= ((cur_msg[bit_counter] == '0' ? 0 : 1) << (7 - bin_bit_counter % 8));
-    
+    cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
     cur_msg_bin[byte_counter] = (cur_msg_bin[byte_counter] << 1) | (cur_msg[bit_counter] == '0' ? 0 : 1);
-    //bin_bit_counter++;
+
     if (bin_bit_counter % 8 == 0) {
         byte_counter++;
     } else if (bin_bit_counter == 9) {
@@ -233,15 +211,14 @@ static irqreturn_t clk_isr(int irq, void *data) {
     }
     // Reset clock
 
-    hrtimer_forward_now(&msg_timer, msg_ktime);
-    }*/
+    //hrtimer_forward_now(&msg_timer, msg_ktime);
     return IRQ_HANDLED;
 }
 
 static int dsc_msg_to_fifo(struct kfifo *fifo, char *msg, int len) {
     unsigned int copied;
     if (kfifo_avail(fifo) < len) {
-        printk (KERN_ERR "dsc: No space left in FIFO for %d\n", len);
+        //printk (KERN_ERR "dsc: No space left in FIFO for %d\n", len);
         return -ENOSPC;
     }
     copied = kfifo_in(fifo, msg, len);
@@ -334,7 +311,7 @@ int gpio_irq(void) {
             return ret;
         }
         keybus_irqs[i] = ret;
-        ret = request_irq(keybus_irqs[i], clk_isr, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING |  IRQF_DISABLED, "dscmod#clk", NULL);
+        ret = request_irq(keybus_irqs[i], clk_isr, IRQF_TRIGGER_RISING |  IRQF_DISABLED, "dscmod#clk", NULL);
         if (ret) {
             printk(KERN_ERR "Unable to request IRQ: %d\n", ret);
             return ret;
@@ -348,7 +325,7 @@ static int dsc_init_timer(void) {
     hrtimer_init(&msg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     msg_timer.function = &msg_timer_callback;
 
-    bit_ktime = ktime_set(0, US_TO_NS(100));
+    bit_ktime = ktime_set(0, US_TO_NS(700));
     hrtimer_init(&bit_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     bit_timer.function = &bit_timer_callback;
     return 0;
