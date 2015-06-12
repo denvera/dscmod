@@ -72,6 +72,7 @@ static int msg_len[MSG_FIFO_MAX];
 static char cur_msg[BUF_LEN];
 
 static char cur_msg_c[BUF_LEN];
+static char s_tmp[BUF_LEN] = "C ";
 
 static char write_c;
 static bool writing = false;
@@ -112,14 +113,18 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
         cur_msg[bit_counter] = '\n';
         cur_msg_c[bit_counter] = '\n';
         bit_counter++;
+ //       s_tmp = "C ";
+//        strncat(s_tmp, cur_msg_c+1, bit_counter+1);
         //cur_msg_bin[++byte_counter] = '\n';
         //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
             if (!dsc_devs[i]->binary) {
                 copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
+                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "C ", 2);
+                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c+1, bit_counter);
             } else {
-                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
-                // test //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
+                // client //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
+                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
                 //memset(cur_msg_bin, 0, BUF_LEN);
             }
             if (copied != -ENOSPC) {
@@ -143,7 +148,7 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     bit = 48 + gpio_get_value(keybus[1].gpio);
 
     cur_msg_c[bit_counter] = bit;
-    if (bit_counter == 11 && !kfifo_is_empty(&dsc_write_fifo)) {
+    if (bit_counter == 11 && !kfifo_is_empty(&dsc_write_fifo) && cur_msg_bin[0] == 0x05) {
         n = kfifo_get(&dsc_write_fifo, &write_c);
         gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-11))) & 0x01);
         writing = true;
@@ -201,7 +206,7 @@ static irqreturn_t clk_isr(int irq, void *data) {
         gpio_direction_input(keybus[1].gpio);
     }
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
-    hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
+    //hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
 
     //bit = 48 + gpio_get_value(keybus[1].gpio);
 
@@ -213,29 +218,30 @@ static irqreturn_t clk_isr(int irq, void *data) {
     cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
     cur_msg_bin[byte_counter] = (cur_msg_bin[byte_counter] << 1) | (cur_msg[bit_counter] == '0' ? 0 : 1);
 
-    if (bin_bit_counter % 8 == 0) {
+/*    if (bin_bit_counter % 8 == 0) {
         byte_counter++;
     } else if (bin_bit_counter == 9) {
         bin_bit_counter += 7;
         byte_counter++;
     }
-    
+  */  
     bit_counter++;
     
     if (bit_counter == 8 || bit_counter == 10) {
         cur_msg[bit_counter] = ' ';
         cur_msg_c[bit_counter++] = ' ';
-        //byte_counter++;
+        byte_counter++;
         //bin_bit_counter = 0;
     } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
         cur_msg[bit_counter] = ' ';
         cur_msg_c[bit_counter++] = ' ';
-        //byte_counter ++;
+        byte_counter ++;
         //bin_bit_counter = 0;
     }
     // Reset clock
 
     //hrtimer_forward_now(&msg_timer, msg_ktime);
+    hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
     return IRQ_HANDLED;
 }
 
