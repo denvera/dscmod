@@ -121,7 +121,7 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
             if (!dsc_devs[i]->binary) {
                 copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
                 copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "C ", 2);
-                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c+1, bit_counter);
+                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c+1, bit_counter-1);
             } else {
                 // client //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
                 copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
