@@ -13,6 +13,7 @@
 #include <linux/string.h>
 #include <asm/uaccess.h>
 #include <asm/errno.h>
+#include <linux/delay.h>
 
 #include "dscmod.h"
 
@@ -108,7 +109,7 @@ static struct dsc_dev dsc_txt = { .binary = false, .name = "dsc_txt" }, dsc_bin 
 static struct dsc_dev * dsc_devs[] = { &dsc_txt, &dsc_bin };
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
-    int i, copied = 0;
+    int i, fmt_msg_len, copied = 0;
     if (dev_open || 0) {        
         cur_msg[bit_counter] = '\n';
         cur_msg_c[bit_counter] = '\n';
@@ -119,9 +120,14 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
         //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
             if (!dsc_devs[i]->binary) {
-                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
-                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "C ", 2);
-                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c+1, bit_counter-1);
+                fmt_msg_len = format_dsc_msg(s_tmp, cur_msg, bit_counter);
+//                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
+                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len);
+                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "\nC ", 3);
+//                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c+1, bit_counter-1);
+                fmt_msg_len = format_dsc_msg(s_tmp, cur_msg_c, bit_counter);
+                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len);
+                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "\n", 1);
             } else {
                 // client //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
                 copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
@@ -144,22 +150,21 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
 
 static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     char bit;
-    int n;
-    bit = 48 + gpio_get_value(keybus[1].gpio);
-
-    cur_msg_c[bit_counter] = bit;
-    if (bit_counter == 11 && !kfifo_is_empty(&dsc_write_fifo) && cur_msg_bin[0] == 0x05) {
+    int n, b;
+    struct timespec read_delay = { .tv_sec = 0, .tv_nsec = US_TO_NS(300) };
+    //bit = 48 + gpio_get_value(keybus[1].gpio);
+    if (bit_counter == 8 && !kfifo_is_empty(&dsc_write_fifo) && cur_msg_bin[0] == 0x05) {
         n = kfifo_get(&dsc_write_fifo, &write_c);
-        gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-11))) & 0x01);
+        gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-8))) & 0x01);
         writing = true;
     }
-    if (writing && bit_counter > 11 && bit_counter <= 18) {
+    if (writing && bit_counter > 8 && bit_counter <= 15) {
         //gpio_direction_output(keybus[1].gpio);
         //gpio_set_value(keybus[1].gpio, (write_c >> (bit_counter-11)) & 0x01);
-        gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-11))) & 0x01);
+        gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-8))) & 0x01);
 //        gpio_direction_input(keybus[1].gpio);
     }
-    if (bit_counter > 18 && writing) {
+    if (bit_counter > 15 && writing) {
         writing = false;
         //gpio_direction_input(keybus[1].gpio);
     }
@@ -171,9 +176,13 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
         bin_bit_counter += 7;
         byte_counter++;
     }
-    
+ */ 
+//    b = bit_counter;
     bit_counter++;
-    
+    usleep_range(250, 280);
+    bit = 48 + gpio_get_value(keybus[1].gpio);
+    cur_msg_c[bit_counter] = bit;
+   /* 
     if (bit_counter == 8 || bit_counter == 10) {
         cur_msg[bit_counter] = ' ';
         cur_msg_c[bit_counter++] = ' ';
@@ -225,16 +234,16 @@ static irqreturn_t clk_isr(int irq, void *data) {
         byte_counter++;
     }
   */  
-    bit_counter++;
+//    bit_counter++;
     
-    if (bit_counter == 8 || bit_counter == 10) {
-        cur_msg[bit_counter] = ' ';
-        cur_msg_c[bit_counter++] = ' ';
+    if (bit_counter == 7 || bit_counter == 8) {
+//        cur_msg[bit_counter] = ' ';
+//        cur_msg_c[bit_counter++] = ' ';
         byte_counter++;
         //bin_bit_counter = 0;
-    } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
-        cur_msg[bit_counter] = ' ';
-        cur_msg_c[bit_counter++] = ' ';
+    } else if (bit_counter > 8 && (bit_counter) % 8 == 0) {
+//        cur_msg[bit_counter] = ' ';
+//        cur_msg_c[bit_counter++] = ' ';
         byte_counter ++;
         //bin_bit_counter = 0;
     }
@@ -269,6 +278,22 @@ static int dsc_open(struct inode *inode, struct file *filp) {
     dev_open++;
     return 0;
 }
+
+static int format_dsc_msg(char *outbuf, char *text_msg, int len) {
+    int i = 0, j = 0;
+    for (i = 0; i < len; i++) {
+        if (i == 8 || i == 9 || i == 17) {
+            outbuf[j] = ' ';
+            j++;
+        } else if ((i > 17) && ((i-1) % 8 == 0)) {
+        outbuf[j] = ' ';
+            j++;
+        }
+        outbuf[j++] = text_msg[i];        
+    }
+    return (j-1);
+}
+
 static int dsc_release(struct inode *inode, struct file *file) {
     dev_open--;
     return 0;
