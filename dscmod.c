@@ -109,7 +109,7 @@ static struct dsc_dev dsc_txt = { .binary = false, .name = "dsc_txt" }, dsc_bin 
 static struct dsc_dev * dsc_devs[] = { &dsc_txt, &dsc_bin };
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
-    int i, fmt_msg_len, copied = 0;
+    int i, fmt_msg_len, copied = 0, tmp = 0;
     if (dev_open || 0) {        
         cur_msg[bit_counter] = '\n';
         cur_msg_c[bit_counter] = '\n';
@@ -122,12 +122,22 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
             if (!dsc_devs[i]->binary) {
                 fmt_msg_len = format_dsc_msg(s_tmp, cur_msg, bit_counter);
 //                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
-                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len);
-                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "\nC ", 3);
+                if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len)) == -ENOSPC) continue;
+                copied += tmp;
+#ifdef CREAD
+                if ((tmp= dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "\nC ", 3)) == -ENOSPC) continue;
+#else
+                if ((tmp= dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "\n", 1)) == -ENOSPC) continue;
+#endif
+                copied += tmp;
+#ifdef CREAD
 //                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c+1, bit_counter-1);
                 fmt_msg_len = format_dsc_msg(s_tmp, cur_msg_c, bit_counter);
-                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len);
-                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "\n", 1);
+                if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len)) == -ENOSPC) continue;
+                copied += tmp;
+                if ((tmp= dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), "\n", 1)) == -ENOSPC) continue;
+                copied += tmp;
+#endif
             } else {
                 // client //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
                 copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1);
@@ -179,9 +189,11 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
  */ 
 //    b = bit_counter;
     bit_counter++;
+#ifdef CREAD
     usleep_range(250, 280);
     bit = 48 + gpio_get_value(keybus[1].gpio);
     cur_msg_c[bit_counter] = bit;
+#endif
    /* 
     if (bit_counter == 8 || bit_counter == 10) {
         cur_msg[bit_counter] = ' ';
