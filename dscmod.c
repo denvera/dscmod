@@ -1,5 +1,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/version.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h> 
 #include <linux/hrtimer.h>
@@ -383,7 +384,11 @@ int gpio_irq(void) {
             return ret;
         }
         keybus_irqs[i] = ret;
-        ret = request_irq(keybus_irqs[i], clk_isr, IRQF_TRIGGER_RISING |  IRQF_DISABLED, "dscmod#clk", NULL);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0))
+        ret = request_irq(keybus_irqs[i], clk_isr, IRQF_TRIGGER_RISING | IRQF_DISABLED, "dscmod#clk", NULL);
+#else
+        ret = request_irq(keybus_irqs[i], clk_isr, IRQF_TRIGGER_RISING, "dscmod#clk", NULL);
+#endif
         if (ret) {
             printk(KERN_ERR "Unable to request IRQ: %d\n", ret);
             return ret;
