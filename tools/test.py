@@ -27,9 +27,9 @@ while True:
                 ccrc += int(b,2)
         ccrc &= 0xff 
         if cmd != 0x05 and cmd != 0x11:
-            print  "{} [{}|{}] - {}".format(bytes_all, hex(ccrc), hex(crc), (ccrc == crc) and "OK" or "BAD")
+            print  "{} [{}|{}] - {}".format(["{:X}".format(int(b,2)) for b in bytes_all], hex(ccrc), hex(crc), (ccrc == crc) and "OK" or "BAD")
         elif cmd == 0x11:
-            print  "{}".format(bytes_all)
+            print  "{}".format(["{:X}".format(int(b,2)) for b in bytes_all])
         sys.stdout.flush()
     except KeyboardInterrupt, e:
         break
