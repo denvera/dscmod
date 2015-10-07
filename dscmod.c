@@ -1,6 +1,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
+#include <linux/ratelimit.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h> 
 #include <linux/hrtimer.h>
@@ -194,7 +195,13 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     }
  */ 
 //    b = bit_counter;
-    bit_counter++;
+    if (bit_counter++ > BUF_LEN) {
+        bit_counter = 0;
+        if (printk_ratelimit()) {
+            printk(KERN_WARNING "dsc: Overflowed bit_counter");
+        }
+        return HRTIMER_NORESTART;
+    }
 #ifdef CREAD
     usleep_range(250, 280);
     bit = 48 + gpio_get_value(keybus[1].gpio);
@@ -253,7 +260,12 @@ static irqreturn_t clk_isr(int irq, void *data) {
     }
   */  
 //    bit_counter++;
-    
+    if (bit_counter >= BUF_LEN || byte_counter >= BUF_LEN) {        
+        printk_ratelimited(KERN_WARNING "dsc: Message buffer overrun");        
+        bit_counter = 0;
+        byte_counter = 0;
+        return IRQ_HANDLED;
+    } 
     if (bit_counter == 7 || bit_counter == 8) {
 //        cur_msg[bit_counter] = ' ';
 //        cur_msg_c[bit_counter++] = ' ';
