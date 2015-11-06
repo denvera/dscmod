@@ -51,7 +51,8 @@ static struct gpio leds[] = {
         {  4, GPIOF_OUT_INIT_LOW, "LED 1" }
 };
 
-static char dev_open = 0;
+static bool dev_open = 0;
+static char open_dev = 0;
 static int major;
 
 static int dsc_major, dsc_minor;
@@ -103,7 +104,8 @@ struct dsc_dev {
     bool binary;
     char *name;
     struct semaphore sem;
-    struct cdev cdev;        
+    struct cdev cdev;
+    bool open;
 };
 
 static struct dsc_dev dsc_txt = { .binary = false, .name = "dsc_txt" }, dsc_bin = { .binary = true, .name = "dsc_bin" };
@@ -121,6 +123,7 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
         //cur_msg_bin[++byte_counter] = '\n';
         //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
+            if (!dsc_devs[i]->open) continue;
             copied = 0;
             if (!dsc_devs[i]->binary) {
                 fmt_msg_len = format_dsc_msg(s_tmp, cur_msg, bit_counter);
@@ -287,7 +290,7 @@ static irqreturn_t clk_isr(int irq, void *data) {
 static int dsc_msg_to_fifo(struct kfifo *fifo, char *msg, int len) {
     unsigned int copied;
     if (kfifo_avail(fifo) < len) {
-        //printk (KERN_ERR "dsc: No space left in FIFO for %d\n", len);
+        printk_ratelimited(KERN_ERR "dsc: No space left in FIFO for %d\n", len);
         return -ENOSPC;
     }
     copied = kfifo_in(fifo, msg, len);
@@ -303,6 +306,7 @@ static int dsc_open(struct inode *inode, struct file *filp) {
     if (dev_open) return -EBUSY;
     struct dsc_dev *dev;
     dev = container_of(inode->i_cdev, struct dsc_dev, cdev);
+    dev->open = true;
     filp->private_data = dev;
     //memset(cur_msg_bin, 0, BUF_LEN);
     dev_open++;
@@ -324,7 +328,10 @@ static int format_dsc_msg(char *outbuf, char *text_msg, int len) {
     return (j-1);
 }
 
-static int dsc_release(struct inode *inode, struct file *file) {
+static int dsc_release(struct inode *inode, struct file *filp) {
+    struct dsc_dev *dev;
+    dev = container_of(inode->i_cdev, struct dsc_dev, cdev);
+    dev->open = false;
     dev_open--;
     return 0;
 }
@@ -433,6 +440,7 @@ int init_dsc_dev(struct dsc_dev *d, int index) {
     dev_t dev;
     d->idx_r = 0;
     d->idx_w = 0;
+    d->open = false;
     ret1 = kfifo_alloc(&(d->r_fifo), FIFO_SIZE, GFP_KERNEL);
     ret2 = kfifo_alloc(&(d->w_fifo), FIFO_SIZE, GFP_KERNEL);
     if (ret1 || ret2) {

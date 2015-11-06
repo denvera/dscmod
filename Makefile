@@ -1,4 +1,4 @@
-cflags-y +=-I/mnt/linux/include
+cflags-y +=-I/lib/modules/$(shell uname -r)/build/include
 obj-m += dscmod.o
 
 ifdef CREAD
