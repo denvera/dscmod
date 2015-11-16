@@ -114,7 +114,7 @@ static struct dsc_dev * dsc_devs[] = { &dsc_txt, &dsc_bin };
 
 static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
     int i, fmt_msg_len, copied = 0, tmp = 0;
-    if (dev_open || 0) {        
+    if ((dev_open || 0) && byte_counter > 0) {        
         cur_msg[bit_counter] = '\n';
         cur_msg_c[bit_counter] = '\n';
         bit_counter++;
@@ -146,14 +146,15 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
 #endif
             } else {
                 // client //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
-                fmt_msg_len = byte_counter+1;
+                fmt_msg_len = byte_counter+1+1;
+                if (kfifo_avail(&(dsc_devs[i]->r_fifo)) < fmt_msg_len) continue;
                 if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), &fmt_msg_len, 1)) == -ENOSPC) continue;
                 copied = tmp;
                 if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1)) == -ENOSPC) continue;
                 copied += tmp;
                 //memset(cur_msg_bin, 0, BUF_LEN);
             }
-            if (copied != -ENOSPC) {
+            if (copied != -ENOSPC && copied != 0) {
                 dsc_devs[i]->msg_len[dsc_devs[i]->idx_w] = copied;
                 dsc_devs[i]->idx_w = (dsc_devs[i]->idx_w + 1) % MSG_FIFO_MAX;
                 wake_up_interruptible(&wq);
@@ -421,7 +422,7 @@ static int dsc_init_timer(void) {
     hrtimer_init(&msg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     msg_timer.function = &msg_timer_callback;
 
-    bit_ktime = ktime_set(0, US_TO_NS(400)); // 700 works ok for reading
+    bit_ktime = ktime_set(0, US_TO_NS(350)); // 700 works ok for reading
     hrtimer_init(&bit_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     bit_timer.function = &bit_timer_callback;
     return 0;
