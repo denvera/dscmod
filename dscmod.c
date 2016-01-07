@@ -13,6 +13,7 @@
 #include <linux/mutex.h>
 #include <linux/wait.h>
 #include <linux/string.h>
+#include <linux/sched.h>
 #include <asm/uaccess.h>
 #include <asm/errno.h>
 #include <linux/delay.h>
@@ -422,7 +423,7 @@ static int dsc_init_timer(void) {
     hrtimer_init(&msg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     msg_timer.function = &msg_timer_callback;
 
-    bit_ktime = ktime_set(0, US_TO_NS(350)); // 700 works ok for reading
+    bit_ktime = ktime_set(0, US_TO_NS(250)); // 700 works ok for reading
     hrtimer_init(&bit_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     bit_timer.function = &bit_timer_callback;
     return 0;
