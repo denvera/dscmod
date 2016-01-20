@@ -45,8 +45,8 @@ static ssize_t dsc_write(struct file *, const char *, size_t, loff_t *);
 
 
 static struct gpio keybus[] = {
-        { 7, GPIOF_IN, "DSC CLK" },   // turns LED on
-        { 8, GPIOF_IN, "DSC DATA" },   // turns LED off
+        { 7, GPIOF_IN, "DSC CLK" },    // KeyBus Clock
+        { 8, GPIOF_IN, "DSC DATA" },   // KeyBus Data
 };
 
 static struct gpio leds[] = {
@@ -54,10 +54,9 @@ static struct gpio leds[] = {
 };
 
 static bool dev_open = 0;
-static char open_dev = 0;
 static int major;
 
-static int dsc_major, dsc_minor;
+static int dsc_major;
 
 static struct class *cl_dsc;
 static struct device *dev_dsc;
@@ -73,8 +72,6 @@ static struct hrtimer msg_timer;
 static struct hrtimer bit_timer;
 static ktime_t msg_ktime, bit_ktime;
 
-static int dsc_msg_idx_rd = 0, dsc_msg_idx_wr = 0;
-static int msg_len[MSG_FIFO_MAX];
 static char cur_msg[BUF_LEN];
 
 static char cur_msg_c[BUF_LEN];
@@ -86,7 +83,6 @@ static bool writing = false;
 static unsigned char cur_msg_bin[BUF_LEN];
 
 static int keybus_irqs[] = { -1, -1 };
-static int blink_delay = 100;
 
 static unsigned int bit_counter = 0;
 static unsigned int bin_bit_counter = 0;
@@ -120,16 +116,11 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
         cur_msg[bit_counter] = '\n';
         cur_msg_c[bit_counter] = '\n';
         bit_counter++;
- //       s_tmp = "C ";
-//        strncat(s_tmp, cur_msg_c+1, bit_counter+1);
-        //cur_msg_bin[++byte_counter] = '\n';
-        //dsc_msg_to_fifo(&dsc_msg_fifo, cur_msg, bit_counter);
         for (i = 0; i < DSC_NUM_DEVS; i++) {
             if (!dsc_devs[i]->open) continue;
             copied = 0;
             if (!dsc_devs[i]->binary) {
                 fmt_msg_len = format_dsc_msg(s_tmp, cur_msg, bit_counter);
-//                copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg, bit_counter);
                 if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len)) == -ENOSPC) continue;
                 copied += tmp;
 #ifdef CREAD
@@ -139,7 +130,6 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
 #endif
                 copied += tmp;
 #ifdef CREAD
-//                copied += dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c+1, bit_counter-1);
                 fmt_msg_len = format_dsc_msg(s_tmp, cur_msg_c, bit_counter);
                 if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), s_tmp, fmt_msg_len)) == -ENOSPC) continue;
                 copied += tmp;
@@ -147,10 +137,9 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
                 copied += tmp;
 #endif
             } else {
-                // client //copied = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_c, bit_counter);
                 fmt_msg_len = byte_counter+1+1;
                 if (kfifo_avail(&(dsc_devs[i]->r_fifo)) < fmt_msg_len) continue;
-                if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), &fmt_msg_len, 1)) == -ENOSPC) continue;
+                if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), (char *)&fmt_msg_len, 1)) == -ENOSPC) continue;
                 copied = tmp;
                 if ((tmp = dsc_msg_to_fifo(&(dsc_devs[i]->r_fifo), cur_msg_bin, byte_counter+1)) == -ENOSPC) continue;
                 copied += tmp;
@@ -172,35 +161,18 @@ static enum hrtimer_restart msg_timer_callback(struct hrtimer *timer) {
 }
 
 static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
-    char bit;
-    int n, b;
-    struct timespec read_delay = { .tv_sec = 0, .tv_nsec = US_TO_NS(300) };
-    //bit = 48 + gpio_get_value(keybus[1].gpio);
+    int n;
     if (bit_counter == 8 && !kfifo_is_empty(&dsc_write_fifo) && cur_msg_bin[0] == 0x05) {
         n = kfifo_get(&dsc_write_fifo, &write_c);
         gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-8))) & 0x01);
         writing = true;
     }
     if (writing && bit_counter > 8 && bit_counter <= 15) {
-        //gpio_direction_output(keybus[1].gpio);
-        //gpio_set_value(keybus[1].gpio, (write_c >> (bit_counter-11)) & 0x01);
         gpio_direction_output(keybus[1].gpio, (write_c >> (7-(bit_counter-8))) & 0x01);
-//        gpio_direction_input(keybus[1].gpio);
     }
     if (bit_counter > 15 && writing) {
         writing = false;
-        //gpio_direction_input(keybus[1].gpio);
     }
-/*    
-    //bin_bit_counter++;
-    if (bin_bit_counter % 8 == 0) {
-        byte_counter++;
-    } else if (bin_bit_counter == 9) {
-        bin_bit_counter += 7;
-        byte_counter++;
-    }
- */ 
-//    b = bit_counter;
     if (bit_counter++ > BUF_LEN) {
         bit_counter = 0;
         if (printk_ratelimit()) {
@@ -213,42 +185,16 @@ static enum hrtimer_restart bit_timer_callback(struct hrtimer *timer) {
     bit = 48 + gpio_get_value(keybus[1].gpio);
     cur_msg_c[bit_counter] = bit;
 #endif
-   /* 
-    if (bit_counter == 8 || bit_counter == 10) {
-        cur_msg[bit_counter] = ' ';
-        cur_msg_c[bit_counter++] = ' ';
-        //byte_counter++;
-        //bin_bit_counter = 0;
-    } else if (bit_counter > 10 && (bit_counter - 10) % 9 == 0) {
-        cur_msg[bit_counter] = ' ';
-        cur_msg_c[bit_counter++] = ' ';
-        //byte_counter ++;
-        //bin_bit_counter = 0;
-    }
-    // Reset clock
-    hrtimer_forward_now(&msg_timer, msg_ktime);
-*/
     return HRTIMER_NORESTART;
 }
 
 static irqreturn_t clk_isr(int irq, void *data) {
-    //char bit = '0';
-/*    if (start_bit) {
-        start_bit = false;
-        return;
-    }
-*/ // Only triggered on rising edge, don't need above
-    //
     // Start clock
     // Read bit
     if (writing) {
-        //gpio_set_value(keybus[1].gpio, 1);
         gpio_direction_input(keybus[1].gpio);
     }
     hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
-    //hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
-
-    //bit = 48 + gpio_get_value(keybus[1].gpio);
 
     if (bit_counter >= BUF_LEN-1) {
         printk (KERN_ERR "dsc: overflowed bit counter\n");    
@@ -258,14 +204,6 @@ static irqreturn_t clk_isr(int irq, void *data) {
     cur_msg[bit_counter] = gpio_get_value(keybus[1].gpio) == 0 ? '0' : '1';
     cur_msg_bin[byte_counter] = (cur_msg_bin[byte_counter] << 1) | (cur_msg[bit_counter] == '0' ? 0 : 1);
 
-/*    if (bin_bit_counter % 8 == 0) {
-        byte_counter++;
-    } else if (bin_bit_counter == 9) {
-        bin_bit_counter += 7;
-        byte_counter++;
-    }
-  */  
-//    bit_counter++;
     if (bit_counter >= BUF_LEN || byte_counter >= BUF_LEN) {        
         printk_ratelimited(KERN_WARNING "dsc: Message buffer overrun");        
         bit_counter = 0;
@@ -273,19 +211,12 @@ static irqreturn_t clk_isr(int irq, void *data) {
         return IRQ_HANDLED;
     } 
     if (bit_counter == 7 || bit_counter == 8) {
-//        cur_msg[bit_counter] = ' ';
-//        cur_msg_c[bit_counter++] = ' ';
         byte_counter++;
-        //bin_bit_counter = 0;
     } else if (bit_counter > 8 && (bit_counter) % 8 == 0) {
-//        cur_msg[bit_counter] = ' ';
-//        cur_msg_c[bit_counter++] = ' ';
         byte_counter ++;
-        //bin_bit_counter = 0;
     }
     // Reset clock
 
-    //hrtimer_forward_now(&msg_timer, msg_ktime);
     hrtimer_start(&bit_timer, bit_ktime, HRTIMER_MODE_REL);
     return IRQ_HANDLED;
 }
@@ -300,14 +231,13 @@ static int dsc_msg_to_fifo(struct kfifo *fifo, char *msg, int len) {
     if (copied != len) {
         printk (KERN_ERR "dsc: Short write to FIFO: %d/%dn", copied, len);
     }
-    //msg_len[dsc_msg_idx_wr] = copied;
-    //dsc_msg_idx_wr = (dsc_msg_idx_wr+1) % MSG_FIFO_MAX;
+
     return copied;
 }
 
 static int dsc_open(struct inode *inode, struct file *filp) {
-    if (dev_open) return -EBUSY;
     struct dsc_dev *dev;
+    if (dev_open) return -EBUSY;
     dev = container_of(inode->i_cdev, struct dsc_dev, cdev);
     dev->open = true;
     filp->private_data = dev;
@@ -363,25 +293,10 @@ static ssize_t dsc_read(struct file *filp, char __user *buffer, size_t length, l
     }
     d->idx_r = (d->idx_r + 1) % MSG_FIFO_MAX;
 
-/*
-    if (wait_event_interruptible(wq, !kfifo_is_empty(&dsc_msg_fifo))) {
-        printk (KERN_WARNING "dsc: read: restart syscall\n");
-        return -ERESTARTSYS;
-    }
-    retval = kfifo_to_user(&dsc_msg_fifo, buffer, msg_len[dsc_msg_idx_rd], &copied);
-    if (retval == 0 && (copied != msg_len[dsc_msg_idx_rd])) {
-        printk (KERN_WARNING "dsc: Short read from fifo: %d/%d\n", copied, msg_len[dsc_msg_idx_rd]);
-    } else if (retval != 0) {
-        printk (KERN_WARNING "dsc: Error reading from kfifo: %d\n", retval);
-    }
-    dsc_msg_idx_rd = (dsc_msg_idx_rd + 1) % MSG_FIFO_MAX;
-*/
     return retval ? retval : copied;
 
 }
 static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t *off) {
-    //printk (KERN_ERR "dsc: Sorry, this operation isn't supported.\n");
-    //return -EINVAL;
     int ret;
     char kbuf[FIFO_SIZE];
     int copy_max = len < FIFO_SIZE ? len : FIFO_SIZE;    
@@ -389,9 +304,7 @@ static ssize_t dsc_write(struct file *filp, const char *buff, size_t len, loff_t
     if (ret != 0) {
         printk(KERN_WARNING "dsc: short write: %d/%d\n", copy_max-ret, len);
     }
-    dsc_msg_to_fifo(&dsc_write_fifo, kbuf, copy_max);
-    //bit_counter = copy_max;
-    //hrtimer_start(&msg_timer, msg_ktime, HRTIMER_MODE_REL);
+    dsc_msg_to_fifo((struct kfifo *)&dsc_write_fifo, kbuf, copy_max);
     return copy_max;
 }
 
@@ -533,10 +446,6 @@ static int __init dsc_init(void)
     return 0;
 fail2:
     gpio_free_array(keybus, ARRAY_SIZE(keybus));
-
-fail1:
-    gpio_free_array(leds, ARRAY_SIZE(leds));
-    return ret; 
 
 err_dev_create:
     class_destroy(cl_dsc);
