@@ -19,15 +19,18 @@ KeyBus runs at 12V, so ensure that a level shifter is used. Any level shifter sh
 
 Set the GPIO pins used by modifying the keybus gpio struct, replacing 7 and 8 below with whatever GPIO pins correspond to your connections to the KeyBus.
 
-```static struct gpio keybus[] = {
+```
+static struct gpio keybus[] = {
         { 7, GPIOF_IN, "DSC CLK" },    // KeyBus Clock (Yellow)
         { 8, GPIOF_IN, "DSC DATA" },   // KeyBus Data (Green)
-};```
+};
+```
 
 
 Example data:
 
-```denver@pcDuino:~$ sudo cat /dev/dsc_txt
+```
+denver@pcDuino:~$ sudo cat /dev/dsc_txt
 00000101 0 10010001 00000001 00010000 11000111 00010000 11000111 00010000 11000111 1    // 0x05 Status messages
 00000101 0 10010001 00000001 00010000 11000111 00010000 11000111 00010000 11000111 1
 ...
@@ -40,7 +43,8 @@ Example data:
 ```
 
 The test.py script parses the above and prints the messages in hex, along with [rcv'd checksum | calculated checksum] - OK if these match, or BAD if they don't.
-```denver@pcDuino:~/dscmod$ sudo python tools/test.py
+```
+denver@pcDuino:~/dscmod$ sudo python tools/test.py
 ['27', '00', '91', '01', '10', 'C7', '01', '91', '00'] [0x91|0x91] - OK
 ['27', '00', '90', '03', '10', 'C7', '00', '91', '00'] [0x91|0x91] - OK
 ['E6', '00', '2C', '40', '00', '00', '00', '00', '52', '00'] [0x52|0x52] - OK
