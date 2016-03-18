@@ -26,6 +26,7 @@ Set the GPIO pins used by modifying the keybus gpio struct, replacing 7 and 8 be
 
 
 Example data:
+
 ```denver@pcDuino:~$ sudo cat /dev/dsc_txt
 00000101 0 10010001 00000001 00010000 11000111 00010000 11000111 00010000 11000111 1    // 0x05 Status messages
 00000101 0 10010001 00000001 00010000 11000111 00010000 11000111 00010000 11000111 1
@@ -37,6 +38,7 @@ Example data:
 ...
 00000101 0 10010001 00000001 00010000 11000111 00010000 11000111 00010000 11000111 1
 ```
+
 The test.py script parses the above and prints the messages in hex, along with [rcv'd checksum | calculated checksum] - OK if these match, or BAD if they don't.
 ```denver@pcDuino:~/dscmod$ sudo python tools/test.py
 ['27', '00', '91', '01', '10', 'C7', '01', '91', '00'] [0x91|0x91] - OK
